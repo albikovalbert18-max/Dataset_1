@@ -1,1 +1,122 @@
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+import plotly.express as px
+from sklearn.preprocessing import StandardScaler
+import warnings
+warnings.filterwarnings('ignore')
 
+# === ЗАГРУЗКА ДАННЫХ ===
+# Вариант А: объединяем train и test
+train = pd.read_csv('train.csv', sep=';')
+test = pd.read_csv('test.csv', sep=';')
+df = pd.concat([train, test], ignore_index=True)
+
+# Вариант Б (если хотите только train):
+# df = pd.read_csv('train.csv', sep=';')
+
+print(f"Общий объём датасета: {df.shape[0]} строк, {df.shape[1]} признаков")
+
+# Разделяем числовые и категориальные признаки
+df_num = df.select_dtypes(include=['int64', 'float64']).drop(columns=['y'], errors='ignore')
+df_cat = df.select_dtypes(include=['object'])
+
+# === 1.3.1.1 Диаграммы распределения ===
+fig, axes = plt.subplots(2, 3, figsize=(15, 10))
+for ax, col in zip(axes.flatten(), df_num.columns[:6]):
+    df[col].hist(bins=30, ax=ax, edgecolor='black')
+    ax.set_title(col)
+plt.tight_layout()
+plt.savefig('fig1_distributions.png', dpi=300, bbox_inches='tight')
+plt.close()
+
+# === 1.3.1.2 Визуализация seaborn ===
+pairs = [('age', 'balance'), ('duration', 'campaign'), ('balance', 'previous')]
+fig, axes = plt.subplots(1, 3, figsize=(18, 5))
+for ax, (x, y) in zip(axes, pairs):
+    sns.scatterplot(x=df[x], y=df[y], alpha=0.6, ax=ax)
+    ax.set_title(f'{x} vs {y}')
+plt.tight_layout()
+plt.savefig('fig2_seaborn_pairs.png', dpi=300, bbox_inches='tight')
+plt.close()
+
+# === 1.3.1.3 Интерактивная визуализация plotly ===
+fig = px.scatter(df, x='age', y='duration', color='y', hover_data=['job'], 
+                 title='Interactive: Age vs Duration vs Target')
+fig.write_image('fig3_plotly_interactive.png', width=1200, height=600)
+
+# === 1.3.1.5 Тепловые карты ===
+# Карта пропусков
+plt.figure(figsize=(8, 6))
+sns.heatmap(df.isnull(), cbar=False, cmap='viridis')
+plt.title('Missing Values Mask')
+plt.savefig('fig5_missing_mask.png', dpi=300, bbox_inches='tight')
+plt.close()
+
+# Матрица корреляций
+plt.figure(figsize=(10, 8))
+sns.heatmap(df_num.corr(), annot=True, cmap='coolwarm', fmt=".2f", linewidths=0.5)
+plt.title('Correlation Matrix (Pearson)')
+plt.savefig('fig4_correlation.png', dpi=300, bbox_inches='tight')
+plt.close()
+
+# === 1.3.1.7 Обработка выбросов (IQR) ===
+for col in ['duration', 'balance']:
+    Q1, Q3 = df[col].quantile(0.25), df[col].quantile(0.75)
+    IQR = Q3 - Q1
+    upper = Q3 + 1.5*IQR if col == 'balance' else 1800  # duration ограничиваем 1800 сек
+    df[col] = df[col].clip(lower=Q1-1.5*IQR, upper=upper)
+
+# === 1.3.1.8 Фильтрация ===
+f1 = df[df['age'] > 30]
+f2 = df[(df['balance'] > 0) & (df['duration'] > 100)]
+f3 = df[(df['campaign'] < 5) & (df['pdays'] != -1)]
+print(f"Фильтры: age>30 → {len(f1)}, balance>0&dur>100 → {len(f2)}, campaign<5&pdays≠-1 → {len(f3)}")
+
+# === 1.3.1.9 Добавление шума ===
+np.random.seed(42)
+df['age_noise'] = df['age'] + np.random.normal(0, 2, len(df))
+df['balance_noise'] = df['balance'] * (1 + np.random.normal(0, 0.05, len(df)))
+
+# === 1.3.1.10 Преобразование age в категории ===
+bins = [18, 30, 45, 60, 100]
+labels = ['18-30', '31-45', '46-60', '61+']
+df['age_cat'] = pd.cut(df['age'], bins=bins, labels=labels, right=False)
+
+# === 1.3.1.11 Стандартизация ===
+scaler = StandardScaler()
+df[['duration', 'campaign', 'balance']] = scaler.fit_transform(df[['duration', 'campaign', 'balance']])
+
+# === 1.3.1.12 Визуализация после фильтрации ===
+fig, axes = plt.subplots(1, 2, figsize=(10, 4))
+df['age'].hist(bins=30, ax=axes[0]); axes[0].set_title('Age after filter')
+df['balance'].hist(bins=30, ax=axes[1]); axes[1].set_title('Balance after filter')
+plt.tight_layout()
+plt.savefig('fig6_post_filter.png', dpi=300, bbox_inches='tight')
+plt.close()
+
+# === 1.3.2.2 Диаграммы категориальных признаков ===
+fig, axes = plt.subplots(2, 2, figsize=(12, 8))
+for ax, col in zip(axes.flatten(), ['job', 'education', 'marital', 'y']):
+    df[col].value_counts().plot(kind='bar', ax=ax, edgecolor='black')
+    ax.set_title(col)
+    ax.tick_params(axis='x', rotation=45)
+plt.tight_layout()
+plt.savefig('fig7_cat_distributions.png', dpi=300, bbox_inches='tight')
+plt.close()
+
+# === 1.3.2.3 Кодирование категориальных признаков ===
+df_encoded = pd.get_dummies(df_cat, columns=['job','marital','education','month','contact','poutcome'], drop_first=False)
+df_binary = df[['housing','loan','default','y']].replace({'yes':1, 'no':0})
+
+# === 1.3.2.4 Агрегация редких категорий ===
+rare_jobs = df['job'].value_counts()[df['job'].value_counts() < 500].index
+df['job'] = df['job'].replace(rare_jobs, 'other')
+
+# === 1.3.2.5 Новый признак ===
+df['financial_commitment'] = ((df['housing']=='yes').astype(int) + (df['loan']=='yes').astype(int))
+
+# Сохранение обработанного датасета (опционально)
+# df.to_csv('bank_processed.csv', index=False, sep=';')
+print("✅ Анализ завершён. Все графики сохранены в папку.")
